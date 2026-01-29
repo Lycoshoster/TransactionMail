@@ -1,0 +1,319 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  role          UserRole @default(ADMIN)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  projects Project[]
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(ACTIVE)
+  dailyQuota  Int      @default(1000) @map("daily_quota")
+  monthlyQuota Int     @default(30000) @map("monthly_quota")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  ownerId     String   @map("owner_id")
+  owner       User     @relation(fields: [ownerId], references: [id])
+
+  apiKeys      ApiKey[]
+  domains      Domain[]
+  templates    Template[]
+  messages     Message[]
+  webhooks     Webhook[]
+  suppressions Suppression[]
+
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  name        String
+  keyHash     String   @unique @map("key_hash")
+  scopes      String[] // send:email, templates:read, etc.
+  revokedAt   DateTime? @map("revoked_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  projectId   String   @map("project_id")
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Domain {
+  id           String      @id @default(cuid())
+  domain       String
+  fromName     String?     @map("from_name")
+  fromEmail    String      @map("from_email")
+  replyTo      String?     @map("reply_to")
+  status       DomainStatus @default(PENDING)
+  
+  // DNS Instructions stored as JSON
+  spfRecord    String?     @map("spf_record")
+  dkimRecord   String?     @map("dkim_record")
+  dmarcRecord  String?     @map("dmarc_record")
+  dkimSelector String?     @map("dkim_selector")
+  
+  verifiedAt   DateTime?   @map("verified_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+  
+  projectId    String      @map("project_id")
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, domain])
+  @@map("domains")
+}
+
+enum DomainStatus {
+  PENDING
+  VERIFIED
+  FAILED
+}
+
+model Template {
+  id          String   @id @default(cuid())
+  name        String
+  subject     String
+  html        String?
+  text        String?
+  variables   String[] // List of variable names
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  projectId   String   @map("project_id")
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  messages    Message[]
+
+  @@unique([projectId, name])
+  @@map("templates")
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  externalId      String?  @unique @map("external_id") // Provider message ID
+  
+  // Recipient info
+  toEmail         String   @map("to_email")
+  toName          String?  @map("to_name")
+  fromEmail       String   @map("from_email")
+  fromName        String?  @map("from_name")
+  replyTo         String?  @map("reply_to")
+  
+  // Content
+  subject         String
+  htmlBody        String?  @map("html_body")
+  textBody        String?  @map("text_body")
+  
+  // Template reference
+  templateId      String?  @map("template_id")
+  template        Template? @relation(fields: [templateId], references: [id])
+  templateData    Json?    @map("template_data")
+  
+  // Metadata
+  status          MessageStatus @default(QUEUED)
+  provider        String?  // smtp, ses, sendgrid, etc.
+  error           String?
+  tags            String[]
+  idempotencyKey  String?  @map("idempotency_key")
+  
+  // Tracking
+  sentAt          DateTime? @map("sent_at")
+  deliveredAt     DateTime? @map("delivered_at")
+  openedAt        DateTime? @map("opened_at")
+  clickedAt       DateTime? @map("clicked_at")
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  projectId       String   @map("project_id")
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  events          Event[]
+  attachments     Attachment[]
+
+  @@index([projectId, createdAt])
+  @@index([idempotencyKey])
+  @@index([toEmail])
+  @@index([status])
+  @@map("messages")
+}
+
+enum MessageStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  DELIVERED
+  BOUNCED
+  COMPLAINED
+  FAILED
+  RETRYING
+}
+
+model Attachment {
+  id          String   @id @default(cuid())
+  filename    String
+  contentType String   @map("content_type")
+  size        Int
+  content     String   // base64 encoded
+  
+  messageId   String   @map("message_id")
+  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("attachments")
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  type        EventType
+  payload     Json     // Event-specific data
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  messageId   String   @map("message_id")
+  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("events")
+}
+
+enum EventType {
+  QUEUED
+  SENT
+  DELIVERED
+  BOUNCED
+  COMPLAINED
+  OPENED
+  CLICKED
+  FAILED
+  RETRY_SCHEDULED
+}
+
+model Webhook {
+  id          String   @id @default(cuid())
+  url         String
+  secret      String   // For HMAC signature
+  eventTypes  String[] @map("event_types")
+  active      Boolean  @default(true)
+  
+  // Stats
+  successCount Int     @default(0) @map("success_count")
+  failCount   Int      @default(0) @map("fail_count")
+  lastTriggeredAt DateTime? @map("last_triggered_at")
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  projectId   String   @map("project_id")
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  deliveries  WebhookDelivery[]
+
+  @@map("webhooks")
+}
+
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  eventType   String   @map("event_type")
+  payload     Json
+  responseStatus Int?  @map("response_status")
+  responseBody String? @map("response_body")
+  error       String?
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  webhookId   String   @map("webhook_id")
+  webhook     Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+  @@index([createdAt])
+  @@map("webhook_deliveries")
+}
+
+model Suppression {
+  id          String   @id @default(cuid())
+  email       String
+  reason      SuppressionReason
+  source      String   // bounce, unsubscribe, complaint, manual
+  metadata    Json?
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  projectId   String   @map("project_id")
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, email])
+  @@map("suppressions")
+}
+
+enum SuppressionReason {
+  BOUNCE
+  COMPLAINT
+  UNSUBSCRIBE
+  MANUAL
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // create, update, delete, login, etc.
+  entityType  String   @map("entity_type") // project, api_key, etc.
+  entityId    String?  @map("entity_id")
+  changes     Json?
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  userId      String?  @map("user_id")
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model IdempotencyKey {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  scope       String   // API key + endpoint
+  response    Json?    // Cached response
+  expiresAt   DateTime @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([key, scope])
+  @@map("idempotency_keys")
+}

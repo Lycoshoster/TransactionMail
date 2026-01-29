@@ -1,0 +1,28 @@
+{
+  "name": "transactionmail",
+  "version": "1.0.0",
+  "description": "Platform for sending transactional emails via API and SMTP relay",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:generate": "cd packages/database && prisma generate",
+    "db:migrate": "cd packages/database && prisma migrate dev",
+    "db:seed": "cd packages/database && prisma db seed",
+    "db:studio": "cd packages/database && prisma studio",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "turbo": "^1.13.0",
+    "typescript": "^5.4.0"
+  },
+  "packageManager": "pnpm@8.15.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
